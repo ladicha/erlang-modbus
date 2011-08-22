@@ -1,0 +1,8 @@
+{application, modbus,
+ [{description, "Modbus Client"},
+  {vsn, "1.0.0"},
+  {modules, [modbus, modbus_device, crc16]},
+  {registered, []},
+  {applications, [kernel, stdlib]},
+  {included_applications, []}]}.
+
