@@ -8,7 +8,7 @@
 
 -export([handle_call/3,handle_cast/2,handle_info/2,code_change/3,terminate/2]).
 -export([connect/5,disconnect/1,init/1]).
--export([read_hreg/2,read_hreg/3,read_ireg/2,read_ireg/3,write_hreg/3]).
+-export([read_hreg/2,read_hreg/3,read_float_hreg/2,read_float_hreg/3,read_ireg/2,read_ireg/3,write_hreg/3,write_float_hreg/3]).
 
 -include("modbus.hrl").
 -behavior(gen_server).
@@ -28,6 +28,13 @@ read_hreg(Device,Offset,Fun) ->
 	Value = read_hreg(Device,Offset),
 	Fun(Value).
 
+read_float_hreg(Device, Offset) ->
+	gen_server:call(Device, {read_hreg_f32, Offset}).
+%% @doc Read from a holding register, with optional conversion function of data when finished.
+read_float_hreg(Device,Offset,Fun) ->
+	Value = read_float_hreg(Device,Offset),
+	Fun(Value).
+
 read_ireg(Device, Offset) ->
 	gen_server:call(Device, {read_ireg_16, Offset}).
 read_ireg(Device,Offset,Fun) ->
@@ -35,8 +42,10 @@ read_ireg(Device,Offset,Fun) ->
 	Fun(Value).
 
 write_hreg(Device, Offset, Value) ->
-	gen_server:call(Device, {write_hreg_16, Offset, Value }).
+	gen_server:call(Device, {write_hreg_16, Offset, Value}).
 
+write_float_hreg(Device, Offset, Value) ->
+	gen_server:call(Device, {write_hreg_f32, Offset, Value}).
 
 init([Type, Host, Port, DeviceAddr]) ->
 	Retval = gen_tcp:connect(Host, Port, [{active,false}, {packet, 0}]),
@@ -58,10 +67,34 @@ handle_call({read_hreg_16, Offset}, _From, State) ->
 
 	{reply, FinalData, NewState, 5000};
 
+handle_call({read_hreg_f32, Offset}, _From, State) ->
+	Request = #rtu_request{address=State#modbus_state.device_address,function_code=?FC_READ_HREGS,start=Offset,data=2},
+	NewState = State#modbus_state{tid=State#modbus_state.tid + 1},
+	{ok, Data} = send_and_receive(NewState,Request),
+
+        {LSHW, MSHW} = lists:split(2, Data),
+        <<FloatData:32/float-big>> = list_to_binary(lists:append(MSHW, LSHW)),
+
+	{reply, FloatData, NewState, 5000};
+
 handle_call({read_ireg_16,Offset}, _From, State) ->
 	Request = #rtu_request{address=State#modbus_state.device_address,function_code=?FC_READ_IREGS,start=Offset,data=1},
 	NewState = State#modbus_state{tid=State#modbus_state.tid + 1},
 	{ok, Data} = send_and_receive(NewState,Request),
+
+	[FinalData] = bytes_to_words(Data),
+
+	{reply, FinalData, NewState, 5000};
+
+handle_call({write_hreg_f32,Offset,OrigData}, From, State) when is_float(OrigData) ->
+        <<LSB:16,MSB:16>> = <<OrigData:32/float>>,
+	handle_call({write_hreg_f32,Offset,[MSB,LSB]}, From, State);
+
+handle_call({write_hreg_f32,Offset,OrigData}, _From, State) ->
+	Request = #rtu_request{address=State#modbus_state.device_address,function_code=?FC_WRITE_HREGS,start=Offset,data=OrigData},
+	NewState = State#modbus_state{tid=State#modbus_state.tid + 1},
+
+	{ok, [_Address,_FunctionCode|Data]} = send_and_receive(NewState, Request),
 
 	[FinalData] = bytes_to_words(Data),
 
