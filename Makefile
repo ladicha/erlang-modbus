@@ -1,30 +1,48 @@
-ERL = erl
-EBIN = ebin
-LIBDIR = $(shell erl -eval 'io:format("~s~n", [code:lib_dir()])' -s init stop -noshell)
-VERSION = $(shell cat VERSION | tr -d '\n')
-CFLAGS = -pa $(EBIN) $(wildcard deps/*/ebin)
-CC = $(ERL) $(CFLAGS)
-APP_NAME = modbus
- 
-all: ebin compile
-boot: all make_boot
-start: all start_all
- 
-compile:
-	@$(CC) -noinput +B -eval 'case make:all() of up_to_date -> halt(0); error -> halt(1) end.'
- 
-edoc:
-	@echo Generating $(APP_NAME) documentation from srcs
-	@$(CC) -noinput -eval 'edoc:application($(APP), "./", [{doc, "doc/"}, {files, "src/"}])' -s erlang halt
- 
-make_boot:
-	(cd $(EBIN); $(CC) -noshell -run make_boot write_scripts $(APP_NAME))
- 
-start_all:
-	(cd ebin; $(CC) -noshell -sname $(APP_NAME) -boot $(APP_NAME))
- 
-ebin:
-	@mkdir ebin
- 
+NAME		:= modbus
+VERSION		:= 1.0
+
+ERL  		:= erl
+ERLC 		:= erlc
+
+# ------------------------------------------------------------------------
+
+ERLC_FLAGS	:= -Wall -I include
+
+SRC			:= $(wildcard src/*.erl)
+TESTS 		:= $(wildcard test_src/*.erl)
+RELEASE		:= $(NAME)-$(VERSION).tar.gz
+
+APPDIR		:= $(NAME)-$(VERSION)
+BEAMS		:= $(SRC:src/%.erl=ebin/%.beam)
+
+compile: $(BEAMS) ebin/$(NAME).app
+
+app: compile
+	@mkdir -p $(APPDIR)/ebin
+	@cp -r ebin/* $(APPDIR)/ebin/
+	@cp -r include $(APPDIR)
+
+release: app
+	@tar czvf $(RELEASE) $(APPDIR)
+
 clean:
-	rm -rf ebin/*.beam ebin/erl_crash.dump erl_crash.dump ebin/*.boot ebin/*.rel ebin/*.script doc/*.html doc/*.css doc/erlang.png doc/edoc-info
+	@rm -f ebin/*.{beam,app}
+	@rm -rf $(NAME)-$(VERSION) $(NAME)-*.tar.gz
+
+test: $(TESTS:test_src/%.erl=test_ebin/%.beam) compile
+	@dialyzer -n --src -c src
+	$(ERL) -pa ebin/ -pa test_ebin/ -noshell -s pgsql_tests run_tests -s init stop
+
+# ------------------------------------------------------------------------
+
+.SUFFIXES: .erl .beam
+.PHONY:    app compile clean test
+
+ebin/%.beam : src/%.erl
+	$(ERLC) $(ERLC_FLAGS) -o $(dir $@) $<
+
+ebin/%.app : src/%.app.src
+	sed -e s/VERSION/$(VERSION)/g $< > $@
+
+test_ebin/%.beam : test_src/%.erl
+	$(ERLC) $(ERLC_FLAGS) -o $(dir $@) $<
